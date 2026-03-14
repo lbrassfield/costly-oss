@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Environment files (NEVER commit these)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Next.js
+.next/
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# Test
+test-results/
+coverage/
+.pytest_cache/
+
+# Legacy (deprecated, not part of active codebase)
+frontend/
+blog/
+backend/server.py
+
+# Claude agent configs (may contain deployment details)
+.claude/agents/

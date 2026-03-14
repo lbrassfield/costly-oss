@@ -1,0 +1,200 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import api from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Bot, Send, User, Sparkles } from "lucide-react";
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
+const SUGGESTIONS = [
+  "Why did our costs increase this month?",
+  "Which warehouses should we downsize?",
+  "What are our most expensive query patterns?",
+  "Show me stale tables we can drop to save money",
+  "Break down costs by user and team",
+  "What quick wins can save us the most?",
+];
+
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, loading]);
+
+  const send = async (text?: string) => {
+    const content = (text || input).trim();
+    if (!content || loading) return;
+
+    const userMsg: Message = { role: "user", content };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res: { response: string; demo: boolean } = await api.post("/chat", {
+        messages: newMessages,
+      });
+      setMessages([...newMessages, { role: "assistant", content: res.response }]);
+    } catch (err) {
+      setMessages([
+        ...newMessages,
+        { role: "assistant", content: "Sorry, I encountered an error. Please try again." },
+      ]);
+    } finally {
+      setLoading(false);
+      textareaRef.current?.focus();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center">
+          <Sparkles className="h-5 w-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Costly AI</h1>
+          <p className="text-sm text-slate-500">Ask anything about your data platform spend</p>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pb-4">
+        {messages.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-sky-500/10 to-blue-600/10 flex items-center justify-center mb-4">
+              <Bot className="h-8 w-8 text-sky-500" />
+            </div>
+            <h2 className="text-lg font-semibold text-slate-700 mb-2">
+              What would you like to know?
+            </h2>
+            <p className="text-sm text-slate-400 mb-6 max-w-md">
+              I can analyze costs across all your connected platforms, find optimization opportunities, and answer questions about your data stack spending.
+            </p>
+            <div className="grid grid-cols-2 gap-2 max-w-lg">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="text-left text-sm px-3 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:border-sky-300 hover:text-sky-700 hover:bg-sky-50/50 transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}>
+            {msg.role === "assistant" && (
+              <Avatar className="h-8 w-8 shrink-0 mt-1">
+                <AvatarFallback className="bg-gradient-to-br from-sky-500 to-blue-600 text-white text-xs">
+                  AI
+                </AvatarFallback>
+              </Avatar>
+            )}
+            <Card
+              className={`max-w-[80%] px-4 py-3 ${
+                msg.role === "user"
+                  ? "bg-sky-600 text-white border-sky-600"
+                  : "bg-white border-slate-200"
+              }`}
+            >
+              <div
+                className={`text-sm whitespace-pre-wrap leading-relaxed ${
+                  msg.role === "assistant" ? "text-slate-700 prose prose-sm prose-slate max-w-none" : ""
+                }`}
+                dangerouslySetInnerHTML={
+                  msg.role === "assistant"
+                    ? { __html: formatMarkdown(msg.content) }
+                    : undefined
+                }
+              >
+                {msg.role === "user" ? msg.content : undefined}
+              </div>
+            </Card>
+            {msg.role === "user" && (
+              <Avatar className="h-8 w-8 shrink-0 mt-1">
+                <AvatarFallback className="bg-slate-200 text-slate-600 text-xs">
+                  <User className="h-4 w-4" />
+                </AvatarFallback>
+              </Avatar>
+            )}
+          </div>
+        ))}
+
+        {loading && (
+          <div className="flex gap-3">
+            <Avatar className="h-8 w-8 shrink-0 mt-1">
+              <AvatarFallback className="bg-gradient-to-br from-sky-500 to-blue-600 text-white text-xs">
+                AI
+              </AvatarFallback>
+            </Avatar>
+            <Card className="px-4 py-3 bg-white border-slate-200">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-3 w-3 rounded-full animate-pulse" />
+                <span className="text-sm text-slate-400">Analyzing your data...</span>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="border-t border-slate-200 pt-4">
+        <div className="flex gap-2 items-end">
+          <Textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about your data platform costs..."
+            className="min-h-[44px] max-h-[120px] resize-none bg-white"
+            rows={1}
+          />
+          <Button
+            onClick={() => send()}
+            disabled={!input.trim() || loading}
+            size="icon"
+            className="h-[44px] w-[44px] shrink-0 bg-sky-600 hover:bg-sky-700"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatMarkdown(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.*?)`/g, '<code class="bg-slate-100 px-1 py-0.5 rounded text-xs">$1</code>')
+    .replace(/\n/g, "<br />");
+}

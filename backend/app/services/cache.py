@@ -1,0 +1,104 @@
+import time
+import json
+import threading
+from typing import Optional, Any
+
+from app.config import settings
+
+
+class _InMemoryCache:
+    """Fallback in-memory TTL cache."""
+
+    def __init__(self):
+        self._store = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[Any]:
+        with self._lock:
+            entry = self._store.get(key)
+            if entry:
+                val, exp = entry
+                if time.time() < exp:
+                    return val
+                del self._store[key]
+        return None
+
+    def set(self, key: str, val: Any, ttl: int):
+        with self._lock:
+            self._store[key] = (val, time.time() + ttl)
+
+    def delete(self, key: str):
+        with self._lock:
+            self._store.pop(key, None)
+
+    def clear_prefix(self, prefix: str):
+        with self._lock:
+            to_del = [k for k in self._store if k.startswith(prefix)]
+            for k in to_del:
+                del self._store[k]
+
+
+class _RedisCache:
+    """Redis-backed cache with JSON serialization."""
+
+    def __init__(self):
+        import redis
+        self._redis = redis.from_url(settings.redis_url, decode_responses=True)
+        self._fallback = _InMemoryCache()
+        self._available = True
+        try:
+            self._redis.ping()
+        except Exception:
+            print("[CACHE] Redis not available, falling back to in-memory cache")
+            self._available = False
+
+    def get(self, key: str) -> Optional[Any]:
+        if not self._available:
+            return self._fallback.get(key)
+        try:
+            raw = self._redis.get(f"costly:{key}")
+            if raw is not None:
+                return json.loads(raw)
+            return None
+        except Exception:
+            return self._fallback.get(key)
+
+    def set(self, key: str, val: Any, ttl: int):
+        if not self._available:
+            self._fallback.set(key, val, ttl)
+            return
+        try:
+            self._redis.setex(f"costly:{key}", ttl, json.dumps(val, default=str))
+        except Exception:
+            self._fallback.set(key, val, ttl)
+
+    def delete(self, key: str):
+        if not self._available:
+            self._fallback.delete(key)
+            return
+        try:
+            self._redis.delete(f"costly:{key}")
+        except Exception:
+            self._fallback.delete(key)
+
+    def clear_prefix(self, prefix: str):
+        if not self._available:
+            self._fallback.clear_prefix(prefix)
+            return
+        try:
+            keys = self._redis.keys(f"costly:{prefix}*")
+            if keys:
+                self._redis.delete(*keys)
+        except Exception:
+            self._fallback.clear_prefix(prefix)
+
+
+def _create_cache():
+    try:
+        return _RedisCache()
+    except Exception:
+        print("[CACHE] Redis import failed, using in-memory cache")
+        return _InMemoryCache()
+
+
+cache = _create_cache()
