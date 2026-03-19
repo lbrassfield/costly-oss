@@ -57,42 +57,77 @@ class DbtCloudConnector(BaseConnector):
                     "limit": 100,
                     "offset": offset,
                     "order_by": "-created_at",
+                    # include_related=job embeds the job object so run["job"]["name"] is populated
+                    "include_related": "job",
                 },
                 timeout=30,
             )
             if resp.status_code != 200:
                 break
-            data = resp.json().get("data", [])
+            body = resp.json()
+            data = body.get("data", [])
             if not data:
                 break
             runs.extend(data)
+            total_count = (
+                body.get("extra", {}).get("pagination", {}).get("total_count", 0)
+            )
             offset += 100
-            if len(data) < 100:
+            # Stop if we've fetched all runs or the page was a partial page
+            if len(data) < 100 or offset >= total_count:
                 break
 
+        # Completed statuses: 10=Success, 20=Error, 30=Cancelled
+        COMPLETED_STATUSES = {10, 20, 30}
+        STATUS_LABELS = {10: "success", 20: "error", 30: "cancelled"}
+
         # Group runs by date and job
-        daily_costs = {}
+        daily_costs: dict = {}
         for run in runs:
-            if run.get("status") != 10:  # 10 = success
+            status = run.get("status")
+            if status not in COMPLETED_STATUSES:
                 continue
             date = run["created_at"][:10]
             job_name = run.get("job", {}).get("name", f"job_{run.get('job_id', 'unknown')}")
-            duration_s = run.get("duration", 0)
-            models = run.get("run_results_count", 0) or 0
+            # duration = total wall-clock time (queue + execution)
+            # run_duration = execution-only time (excludes queue wait)
+            duration_s = run.get("duration", 0) or 0
+            run_duration_s = run.get("run_duration", 0) or 0
+            queued_duration_s = max(0, duration_s - run_duration_s)
 
             key = (date, job_name)
             if key not in daily_costs:
-                daily_costs[key] = {"duration_s": 0, "models": 0, "runs": 0}
+                daily_costs[key] = {
+                    "duration_s": 0,
+                    "run_duration_s": 0,
+                    "queued_duration_s": 0,
+                    "runs": 0,
+                    "errors": 0,
+                    "cancelled": 0,
+                }
             daily_costs[key]["duration_s"] += duration_s
-            daily_costs[key]["models"] += models
+            daily_costs[key]["run_duration_s"] += run_duration_s
+            daily_costs[key]["queued_duration_s"] += queued_duration_s
             daily_costs[key]["runs"] += 1
+            if status == 20:
+                daily_costs[key]["errors"] += 1
+            elif status == 30:
+                daily_costs[key]["cancelled"] += 1
 
         costs = []
         for (date, job_name), stats in daily_costs.items():
-            # dbt Cloud pricing: ~$100-500/mo depending on plan
-            # We track run minutes as the usage metric; cost attribution
-            # can be set by the user based on their plan
             run_minutes = stats["duration_s"] / 60
+
+            # dbt Cloud Starter plan charges ~$0.01 per successful model built.
+            # The runs endpoint does not return model counts — the artifacts
+            # endpoint (/runs/{id}/artifacts/) would be needed but requires one
+            # request per run, which is too expensive. Model count is set to 0.
+            models_executed = 0  # artifacts endpoint required for actual count
+
+            # Cost estimate: use execution duration as a proxy for compute cost.
+            # Rough estimate: $0.50 per compute-hour (varies by plan).
+            # This is an estimate only — actual billing depends on dbt Cloud plan.
+            cost_usd = round(stats["run_duration_s"] / 3600 * 0.50, 6)
 
             costs.append(UnifiedCost(
                 date=date,
@@ -100,13 +135,18 @@ class DbtCloudConnector(BaseConnector):
                 service="dbt_cloud",
                 resource=job_name,
                 category=CostCategory.transformation,
-                cost_usd=0.0,  # User configures plan cost; we do attribution
+                cost_usd=cost_usd,
                 usage_quantity=round(run_minutes, 2),
                 usage_unit="run_minutes",
                 metadata={
                     "runs": stats["runs"],
-                    "models_executed": stats["models"],
+                    "errors": stats["errors"],
+                    "cancelled": stats["cancelled"],
+                    "models_executed": models_executed,
                     "total_duration_seconds": stats["duration_s"],
+                    "execution_duration_seconds": stats["run_duration_s"],
+                    "queued_duration_seconds": stats["queued_duration_s"],
+                    "cost_is_estimate": True,
                 },
             ))
 

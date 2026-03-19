@@ -11,17 +11,20 @@ import httpx
 from app.models.platform import UnifiedCost, CostCategory
 from app.services.connectors.base import BaseConnector
 
-# Pricing per million tokens (as of early 2026)
+# Pricing per million tokens (as of 2026)
 MODEL_PRICING = {
+    "gpt-4.1": {"input": 2.0, "output": 8.0},
+    "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+    "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
     "gpt-4o": {"input": 2.50, "output": 10.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-4-turbo": {"input": 10.0, "output": 30.0},
     "gpt-4": {"input": 30.0, "output": 60.0},
     "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
     "o1": {"input": 15.0, "output": 60.0},
-    "o1-mini": {"input": 3.0, "output": 12.0},
+    "o1-mini": {"input": 1.10, "output": 4.40},
     "o1-pro": {"input": 150.0, "output": 600.0},
-    "o3": {"input": 10.0, "output": 40.0},
+    "o3": {"input": 2.0, "output": 8.0},
     "o3-mini": {"input": 1.10, "output": 4.40},
     "o4-mini": {"input": 1.10, "output": 4.40},
     "dall-e-3": {"input": 0.0, "output": 0.0},  # image pricing is per-image
@@ -71,9 +74,28 @@ class OpenAIConnector(BaseConnector):
                 headers=headers,
                 timeout=10,
             )
-            if resp.status_code == 200:
-                return {"success": True, "message": "OpenAI API connection successful"}
-            return {"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            if resp.status_code != 200:
+                return {"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+
+            # Check if the key has admin access to the usage endpoint
+            end = datetime.utcnow()
+            start = end - timedelta(days=1)
+            usage_resp = httpx.get(
+                f"{self.base_url}/organization/usage/completions",
+                headers=headers,
+                params={
+                    "start_time": int(start.timestamp()),
+                    "end_time": int(end.timestamp()),
+                    "bucket_width": "1d",
+                },
+                timeout=10,
+            )
+            if usage_resp.status_code == 403:
+                return {
+                    "success": True,
+                    "message": "Connected (note: usage data requires an Admin API key)",
+                }
+            return {"success": True, "message": "OpenAI API connection successful"}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
