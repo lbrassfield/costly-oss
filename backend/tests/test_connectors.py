@@ -81,9 +81,9 @@ def test_connector_has_required_methods(module_path, class_name, platform):
     reason="motor not installed (runs in Docker)"
 )
 def test_connector_map_has_all_connectors():
-    """CONNECTOR_MAP must include all 15 connectors."""
+    """CONNECTOR_MAP must include all 16 connectors (15 external + snowflake)."""
     from app.services.unified_costs import CONNECTOR_MAP
-    expected = {"aws", "anthropic", "dbt_cloud", "openai", "fivetran", "gemini",
+    expected = {"snowflake", "aws", "anthropic", "dbt_cloud", "openai", "fivetran", "gemini",
                 "airbyte", "monte_carlo", "gcp", "databricks", "looker",
                 "tableau", "github", "gitlab", "omni"}
     assert set(CONNECTOR_MAP.keys()) == expected
@@ -170,7 +170,7 @@ class TestAWSConnector:
         assert len(costs) == 1
         assert isinstance(costs[0], UnifiedCost)
         assert costs[0].platform == "aws"
-        assert costs[0].service == "aws_simple_storage_service"
+        assert costs[0].service == "aws_s3"
         assert costs[0].category == CostCategory.storage
         assert costs[0].cost_usd == 12.50
         assert costs[0].date == "2026-03-01"

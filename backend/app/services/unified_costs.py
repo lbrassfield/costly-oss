@@ -136,9 +136,11 @@ async def sync_platform_costs(user_id: str, connection_id: str, days: int = 30) 
         doc = cost.model_dump()
         doc["user_id"] = user_id
         doc["connection_id"] = connection_id
+        doc["account_name"] = conn["name"]
         ops.append({
             "filter": {
                 "user_id": user_id,
+                "connection_id": connection_id,
                 "date": cost.date,
                 "platform": cost.platform,
                 "service": cost.service,
@@ -281,6 +283,20 @@ async def get_unified_costs(user_id: str, days: int = 30) -> dict:
         {"$limit": 20},
     ]).to_list(20)
 
+    # By account — per-connection breakdown (useful when multiple accounts share a platform)
+    by_account = await db.unified_costs.aggregate([
+        {"$match": {"user_id": user_id, "date": {"$gte": since}}},
+        {"$group": {
+            "_id": {
+                "platform": "$platform",
+                "connection_id": "$connection_id",
+                "account_name": "$account_name",
+            },
+            "cost": {"$sum": "$cost_usd"},
+        }},
+        {"$sort": {"cost": -1}},
+    ]).to_list(200)
+
     return {
         "total_cost": round(total_cost, 2),
         "days": days,
@@ -296,5 +312,14 @@ async def get_unified_costs(user_id: str, days: int = 30) -> dict:
                 "usage": round(r["usage"], 2),
             }
             for r in top_resources
+        ],
+        "by_account": [
+            {
+                "platform": r["_id"]["platform"],
+                "connection_id": r["_id"].get("connection_id"),
+                "account_name": r["_id"].get("account_name"),
+                "cost": round(r["cost"], 2),
+            }
+            for r in by_account
         ],
     }
