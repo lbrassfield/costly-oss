@@ -1,5 +1,7 @@
 """Shared test fixtures for Costly backend tests."""
 import os
+import sys
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Set required env vars BEFORE any app.* imports so app.config doesn't raise.
@@ -10,6 +12,13 @@ from cryptography.fernet import Fernet
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-key-must-be-32-chars-ok!")
 os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+
+# ---------------------------------------------------------------------------
+# Stub heavy optional packages not installed in the unit-test environment.
+# These are only needed at runtime in Docker; tests mock them out.
+# ---------------------------------------------------------------------------
+for _mod in ("snowflake", "snowflake.connector"):
+    sys.modules.setdefault(_mod, MagicMock())
 
 import pytest
 from datetime import datetime, timedelta
@@ -156,6 +165,11 @@ def _make_mock_db():
 @pytest.fixture
 def mock_db():
     """Patch db in every router/dep that directly imports it from app.database."""
+    # Pre-import submodules so mock.patch can resolve them via getattr (required in Python 3.12+)
+    import app.routers.auth  # noqa: F401
+    import app.routers.connections  # noqa: F401
+    import app.deps  # noqa: F401
+
     db = _make_mock_db()
     targets = [
         "app.routers.auth.db",

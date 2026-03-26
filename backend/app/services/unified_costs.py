@@ -71,6 +71,7 @@ async def get_platform_connections(user_id: str) -> list[dict]:
 async def add_platform_connection(user_id: str, platform: str, name: str, credentials: dict) -> dict:
     """Store a new platform connection with encrypted credentials."""
     from app.services.encryption import encrypt_value
+    from app.utils.helpers import run_in_thread
 
     encrypted_creds = {}
     for k, v in credentials.items():
@@ -88,6 +89,15 @@ async def add_platform_connection(user_id: str, platform: str, name: str, creden
         "created_at": datetime.utcnow().isoformat(),
         "last_synced": None,
     }
+
+    if platform == "aws":
+        try:
+            from app.services.connectors.aws_connector import AWSConnector
+            connector = await run_in_thread(lambda: AWSConnector(credentials))
+            doc["account_id"] = connector.account_id
+        except Exception:
+            pass
+
     result = await db.platform_connections.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
     return doc
@@ -137,6 +147,7 @@ async def sync_platform_costs(user_id: str, connection_id: str, days: int = 30) 
         doc["user_id"] = user_id
         doc["connection_id"] = connection_id
         doc["account_name"] = conn["name"]
+        doc["account_id"] = conn.get("account_id", "")
         ops.append({
             "filter": {
                 "user_id": user_id,
@@ -290,8 +301,9 @@ async def get_unified_costs(user_id: str, days: int = 30) -> dict:
             "_id": {
                 "platform": "$platform",
                 "connection_id": "$connection_id",
-                "account_name": "$account_name",
+                "account_name": {"$ifNull": ["$account_name", "Unknown"]},
             },
+            "account_id": {"$first": "$account_id"},
             "cost": {"$sum": "$cost_usd"},
         }},
         {"$sort": {"cost": -1}},
@@ -317,7 +329,8 @@ async def get_unified_costs(user_id: str, days: int = 30) -> dict:
             {
                 "platform": r["_id"]["platform"],
                 "connection_id": r["_id"].get("connection_id"),
-                "account_name": r["_id"].get("account_name"),
+                "account_name": r["_id"]["account_name"],
+                "account_id": r.get("account_id", ""),
                 "cost": round(r["cost"], 2),
             }
             for r in by_account
